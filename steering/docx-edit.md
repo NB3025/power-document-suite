@@ -1,10 +1,10 @@
 # Word 문서 편집 (OOXML)
 
-기존 .docx 파일 편집 및 Tracked Changes(변경 추적) 가이드입니다.
+기존 .docx 파일 편집, Tracked Changes, Comments 가이드입니다.
 
 ## Overview
 
-Word 문서(.docx)는 ZIP으로 압축된 XML 파일들입니다. 기존 문서를 편집하려면 OOXML(Office Open XML)을 직접 수정합니다.
+Word 문서(.docx)는 ZIP으로 압축된 XML 파일입니다. 기존 문서를 편집하려면 OOXML을 직접 수정합니다.
 
 ## Workflow Decision Tree
 
@@ -19,32 +19,48 @@ Word 문서 작업 유형?
 ## Prerequisites
 
 ```bash
-pip install defusedxml
+pip install defusedxml "markitdown[pptx]"
 ```
 
 ---
 
 ## ⚠️ CRITICAL: 자주 발생하는 오류
 
-### ❌/✅ Common Mistakes
-
 | ❌ Wrong | ✅ Correct | 설명 |
 |----------|-----------|------|
-| 변경된 텍스트만 `<w:del>`/`<w:ins>` 안에 | 변경된 부분만 태그 안에, 나머지 밖에 | 최소 범위 마킹 |
-| `<w:ins>` 내부 텍스트 직접 수정 | 중첩 `<w:del>` 사용 | 다른 작성자 변경 수정 시 |
-| RSID `ABC123` | RSID `00AB1234` (8자리) | 16진수 8자리 |
+| 변경된 부분만이 아닌 전체를 태그에 | 변경된 부분만 최소 범위 마킹 | 최소 편집 원칙 |
 | `<w:del>` 안에 `<w:t>` | `<w:del>` 안에 `<w:delText>` | 삭제 텍스트 태그 |
-| `data_only=True` 저장 | `data_only=False` (기본) | 수식 보존 |
+| RSID `ABC123` | RSID `00AB1234` (8자리) | 16진수 8자리 |
+| `<w:r>` 안에 tracked change 삽입 | 전체 `<w:r>` 교체 | `<w:del>...<w:ins>...` 형제로 |
+| `<w:rPr>` 포맷팅 미보존 | 원본 `<w:rPr>` 복사 | 볼드, 폰트 크기 등 유지 |
+| 단락 삭제 시 paragraph mark 미처리 | `<w:pPr><w:rPr><w:del/>` 추가 | 빈 줄 방지 |
+| `xml.etree.ElementTree` 사용 | `defusedxml.minidom` 사용 | 네임스페이스 손상 방지 |
 | `<w:ins>...<w:del>` 혼합 | 올바른 태그 닫기 | XML 구조 준수 |
 
 ---
 
-## 기본 워크플로우
+## 기본 워크플로우 (3단계)
 
 ### Step 1: 언팩 (ZIP 해제)
 
 ```bash
 unzip document.docx -d unpacked/
+```
+
+또는 Python으로:
+
+```python
+import zipfile
+import os
+from defusedxml.minidom import parseString
+
+def unpack_docx(docx_path, output_dir):
+    """DOCX 파일을 언팩합니다."""
+    with zipfile.ZipFile(docx_path, 'r') as zf:
+        zf.extractall(output_dir)
+
+# 사용법
+unpack_docx('document.docx', 'unpacked/')
 ```
 
 ### Step 2: XML 편집
@@ -62,10 +78,62 @@ unpacked/
 └── _rels/
 ```
 
+**"Claude"를 tracked changes/comments 작성자로 사용**, 사용자가 다른 이름을 요청하지 않는 한.
+
+**Edit 도구로 직접 문자열 교체. Python 스크립트 작성 금지.** 스크립트는 불필요한 복잡성. Edit 도구는 무엇이 교체되는지 정확히 보여줌.
+
+**⚠️ 새 텍스트에 스마트 따옴표 사용:**
+
+```xml
+<w:t>Here&#x2019;s a quote: &#x201C;Hello&#x201D;</w:t>
+```
+
+| 엔티티 | 문자 |
+|--------|------|
+| `&#x2018;` | ' (왼쪽 작은따옴표) |
+| `&#x2019;` | ' (오른쪽 작은따옴표 / 아포스트로피) |
+| `&#x201C;` | " (왼쪽 큰따옴표) |
+| `&#x201D;` | " (오른쪽 큰따옴표) |
+
 ### Step 3: 팩 (ZIP 압축)
 
 ```bash
 cd unpacked && zip -r ../output.docx . -x "*.DS_Store"
+```
+
+또는 Python으로:
+
+```python
+import zipfile
+import os
+
+def pack_docx(input_dir, output_path):
+    """디렉토리를 DOCX로 팩합니다."""
+    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(input_dir):
+            for file in files:
+                if file.startswith('.'):  # 숨김 파일 제외
+                    continue
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, input_dir)
+                zf.write(file_path, arc_name)
+
+# 사용법
+pack_docx('unpacked/', 'output.docx')
+```
+
+**팩 후 확인사항:**
+- `durableId` >= 0x7FFFFFFF인 경우 유효 ID로 재생성 필요
+- 공백 있는 `<w:t>`에 `xml:space="preserve"` 누락 확인
+
+---
+
+## .doc → .docx 변환
+
+레거시 `.doc` 파일은 편집 전 변환 필수:
+
+```bash
+soffice --headless --convert-to docx document.doc
 ```
 
 ---
@@ -153,8 +221,10 @@ cd unpacked && zip -r ../output.docx . -x "*.DS_Store"
 ### ⚠️ CRITICAL: Tracked Changes 핵심 규칙
 
 1. **변경된 부분만 마킹**: 변경되지 않은 텍스트는 `<w:del>`/`<w:ins>` 외부에 유지
-2. **다른 작성자 변경 수정**: 내부 텍스트 직접 수정 금지, 중첩 `<w:del>` 사용
-3. **RSID 형식**: 8자리 16진수 (예: `00AB1234`)
+2. **전체 `<w:r>` 교체**: tracked change 추가 시, `<w:r>` 안에 태그를 삽입하지 말고, 전체 `<w:r>...</w:r>` 블록을 `<w:del>...<w:ins>...` 형제로 교체
+3. **`<w:rPr>` 포맷팅 보존**: 원본 run의 `<w:rPr>` 블록을 tracked change run에 복사하여 볼드, 폰트 크기 등 유지
+4. **다른 작성자 변경 수정**: 내부 텍스트 직접 수정 금지, 중첩 `<w:del>` 사용
+5. **RSID 형식**: 8자리 16진수 (예: `00AB1234`)
 
 ### settings.xml에 추적 활성화
 
@@ -165,143 +235,7 @@ cd unpacked && zip -r ../output.docx . -x "*.DS_Store"
 </w:settings>
 ```
 
-### 텍스트 삽입 (Insertion)
-
-```xml
-<w:ins w:id="1" w:author="Claude" w:date="2025-01-27T00:00:00Z" w16du:dateUtc="2025-01-27T00:00:00Z">
-  <w:r w:rsidR="00792858">
-    <w:t>추가된 텍스트</w:t>
-  </w:r>
-</w:ins>
-```
-
-### 텍스트 삭제 (Deletion)
-
-```xml
-<w:del w:id="2" w:author="Claude" w:date="2025-01-27T00:00:00Z" w16du:dateUtc="2025-01-27T00:00:00Z">
-  <w:r w:rsidDel="00792858">
-    <w:delText>삭제된 텍스트</w:delText>  <!-- ⚠️ delText 사용! -->
-  </w:r>
-</w:del>
-```
-
-### 텍스트 교체 패턴
-
-**"monthly" → "quarterly" 변경 (최소 범위)**:
-
-```xml
-<!-- 변경 전: <w:r><w:t>The report is monthly</w:t></w:r> -->
-
-<!-- 변경 후: 변경되지 않은 부분은 외부에 -->
-<w:r w:rsidR="00AB12CD"><w:t>The report is </w:t></w:r>
-<w:del w:id="1" w:author="Claude" w:date="2025-01-27T00:00:00Z">
-  <w:r><w:delText>monthly</w:delText></w:r>
-</w:del>
-<w:ins w:id="2" w:author="Claude" w:date="2025-01-27T00:00:00Z">
-  <w:r><w:t>quarterly</w:t></w:r>
-</w:ins>
-```
-
-### 다른 작성자의 삽입 삭제 (중첩 구조)
-
-```xml
-<!-- 다른 사람이 삽입한 "monthly"를 삭제하고 "weekly"로 변경 -->
-<!-- ⚠️ CRITICAL: 내부 텍스트 직접 수정 금지! 중첩 del 사용 -->
-
-<w:ins w:author="Jane Smith" w:id="16">
-  <w:del w:author="Claude" w:id="40">
-    <w:r><w:delText>monthly</w:delText></w:r>
-  </w:del>
-</w:ins>
-<w:ins w:author="Claude" w:id="41">
-  <w:r><w:t>weekly</w:t></w:r>
-</w:ins>
-```
-
-### 다른 작성자의 삭제 복원
-
-```xml
-<!-- 다른 사람이 삭제한 내용을 복원 -->
-<!-- 원본 del 유지, 새 ins 추가 -->
-
-<w:del w:author="Jane Smith" w:id="50">
-  <w:r><w:delText>within 30 days</w:delText></w:r>
-</w:del>
-<w:ins w:author="Claude" w:id="51">
-  <w:r><w:t>within 30 days</w:t></w:r>
-</w:ins>
-```
-
----
-
-## Comments (코멘트) 추가
-
-### document.xml에 코멘트 범위 지정
-
-```xml
-<w:commentRangeStart w:id="0"/>
-<w:r><w:t>코멘트 대상 텍스트</w:t></w:r>
-<w:commentRangeEnd w:id="0"/>
-<w:r><w:commentReference w:id="0"/></w:r>
-```
-
-### comments.xml 생성/수정
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:comment w:id="0" w:author="Claude" w:date="2025-01-27T00:00:00Z" w:initials="C">
-    <w:p>
-      <w:r><w:t>코멘트 내용입니다.</w:t></w:r>
-    </w:p>
-  </w:comment>
-</w:comments>
-```
-
-### Content_Types.xml 업데이트
-
-```xml
-<Override PartName="/word/comments.xml"
-          ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
-```
-
-### document.xml.rels 업데이트
-
-```xml
-<Relationship Id="rId10"
-              Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
-              Target="comments.xml"/>
-```
-
----
-
-## Python 유틸리티
-
-### 기본 unpack/pack
-
-```python
-import zipfile
-import os
-from defusedxml.minidom import parseString
-
-def unpack_docx(docx_path, output_dir):
-    """DOCX 파일을 언팩합니다."""
-    with zipfile.ZipFile(docx_path, 'r') as zf:
-        zf.extractall(output_dir)
-
-def pack_docx(input_dir, output_path):
-    """디렉토리를 DOCX로 팩합니다."""
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for root, dirs, files in os.walk(input_dir):
-            for file in files:
-                if file.startswith('.'):  # 숨김 파일 제외
-                    continue
-                file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, input_dir)
-                zf.write(file_path, arc_name)
-```
-
-### XML 편집 예제
+Python으로 활성화:
 
 ```python
 from defusedxml.minidom import parse
@@ -326,6 +260,103 @@ def enable_track_revisions(unpacked_dir):
 
     with open(settings_path, 'w', encoding='utf-8') as f:
         dom.writexml(f)
+```
+
+### 텍스트 삽입 (Insertion)
+
+```xml
+<w:ins w:id="1" w:author="Claude" w:date="2025-01-27T00:00:00Z" w16du:dateUtc="2025-01-27T00:00:00Z">
+  <w:r w:rsidR="00792858">
+    <w:t>추가된 텍스트</w:t>
+  </w:r>
+</w:ins>
+```
+
+### 텍스트 삭제 (Deletion)
+
+```xml
+<w:del w:id="2" w:author="Claude" w:date="2025-01-27T00:00:00Z" w16du:dateUtc="2025-01-27T00:00:00Z">
+  <w:r w:rsidDel="00792858">
+    <w:delText>삭제된 텍스트</w:delText>  <!-- ⚠️ delText 사용! -->
+  </w:r>
+</w:del>
+```
+
+**`<w:del>` 안에서**: `<w:t>` 대신 `<w:delText>`, `<w:instrText>` 대신 `<w:delInstrText>` 사용.
+
+### 텍스트 교체 패턴 (최소 편집)
+
+변경된 부분만 마킹:
+
+**"monthly" → "quarterly" 변경 (최소 범위)**:
+
+```xml
+<!-- 변경 전: <w:r><w:t>The report is monthly</w:t></w:r> -->
+
+<!-- 변경 후: 변경되지 않은 부분은 외부에 -->
+<w:r w:rsidR="00AB12CD"><w:t>The report is </w:t></w:r>
+<w:del w:id="1" w:author="Claude" w:date="2025-01-27T00:00:00Z">
+  <w:r><w:delText>monthly</w:delText></w:r>
+</w:del>
+<w:ins w:id="2" w:author="Claude" w:date="2025-01-27T00:00:00Z">
+  <w:r><w:t>quarterly</w:t></w:r>
+</w:ins>
+```
+
+### 전체 단락/리스트 항목 삭제
+
+모든 콘텐츠를 제거할 때 paragraph mark도 삭제 마킹 (빈 줄 방지):
+
+```xml
+<w:p>
+  <w:pPr>
+    <w:numPr>...</w:numPr>
+    <w:rPr>
+      <w:del w:id="1" w:author="Claude" w:date="2025-01-01T00:00:00Z"/>
+    </w:rPr>
+  </w:pPr>
+  <w:del w:id="2" w:author="Claude" w:date="2025-01-01T00:00:00Z">
+    <w:r><w:delText>Entire paragraph content being deleted...</w:delText></w:r>
+  </w:del>
+</w:p>
+```
+
+### 다른 작성자의 삽입 거부 (중첩 구조)
+
+```xml
+<!-- 다른 사람이 삽입한 "monthly"를 삭제하고 "weekly"로 변경 -->
+<!-- ⚠️ CRITICAL: 내부 텍스트 직접 수정 금지! 중첩 del 사용 -->
+
+<w:ins w:author="Jane Smith" w:id="16">
+  <w:del w:author="Claude" w:id="40">
+    <w:r><w:delText>monthly</w:delText></w:r>
+  </w:del>
+</w:ins>
+<w:ins w:author="Claude" w:id="41">
+  <w:r><w:t>weekly</w:t></w:r>
+</w:ins>
+```
+
+### 다른 작성자의 삭제 복원
+
+```xml
+<!-- 다른 사람이 삭제한 내용을 복원 -->
+<!-- 원래 삭제를 수정하지 말고, 뒤에 삽입 추가 -->
+
+<w:del w:author="Jane Smith" w:id="50">
+  <w:r><w:delText>within 30 days</w:delText></w:r>
+</w:del>
+<w:ins w:author="Claude" w:id="51">
+  <w:r><w:t>within 30 days</w:t></w:r>
+</w:ins>
+```
+
+### Python Tracked Change 유틸리티
+
+```python
+from defusedxml.minidom import parse, parseString
+import os
+from datetime import datetime
 
 def find_and_replace_tracked(unpacked_dir, old_text, new_text, author="Claude"):
     """텍스트를 찾아 tracked change로 교체합니다."""
@@ -334,10 +365,8 @@ def find_and_replace_tracked(unpacked_dir, old_text, new_text, author="Claude"):
     with open(doc_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    from datetime import datetime
     date = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # 간단한 텍스트 교체 (실제로는 XML 파싱 필요)
     replacement = f'''<w:del w:id="1" w:author="{author}" w:date="{date}">
       <w:r><w:delText>{old_text}</w:delText></w:r>
     </w:del>
@@ -350,18 +379,10 @@ def find_and_replace_tracked(unpacked_dir, old_text, new_text, author="Claude"):
 
     with open(doc_path, 'w', encoding='utf-8') as f:
         f.write(content)
-```
 
-### 완전한 Tracked Change 예제
-
-```python
-from defusedxml.minidom import parse, parseString
-import os
-import shutil
-from datetime import datetime
 
 def add_tracked_change(unpacked_dir, search_text, old_word, new_word, author="Claude"):
-    """특정 텍스트 내 단어를 tracked change로 교체합니다."""
+    """특정 텍스트 내 단어를 tracked change로 교체합니다 (rPr 보존)."""
     doc_path = os.path.join(unpacked_dir, 'word', 'document.xml')
     dom = parse(doc_path)
 
@@ -408,6 +429,159 @@ def add_tracked_change(unpacked_dir, search_text, old_word, new_word, author="Cl
 
     with open(doc_path, 'w', encoding='utf-8') as f:
         dom.writexml(f)
+```
+
+### Tracked Changes 수락 (CLI)
+
+pandoc으로 tracked changes를 수락:
+
+```bash
+pandoc --track-changes=accept input.docx -o output.docx
+```
+
+---
+
+## Comments (코멘트) 추가
+
+### document.xml에 코멘트 범위 지정
+
+**⚠️ CRITICAL: `<w:commentRangeStart>`/`<w:commentRangeEnd>`는 `<w:r>`의 형제, 절대 내부가 아님.**
+
+```xml
+<!-- 코멘트 마커는 w:p의 직접 자식, w:r 안에 들어가지 않음 -->
+<w:commentRangeStart w:id="0"/>
+<w:r><w:t>코멘트 대상 텍스트</w:t></w:r>
+<w:commentRangeEnd w:id="0"/>
+<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r>
+```
+
+### 답글 코멘트 (중첩)
+
+```xml
+<w:commentRangeStart w:id="0"/>
+  <w:commentRangeStart w:id="1"/>
+  <w:r><w:t>text</w:t></w:r>
+  <w:commentRangeEnd w:id="1"/>
+<w:commentRangeEnd w:id="0"/>
+<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="0"/></w:r>
+<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="1"/></w:r>
+```
+
+### comments.xml 생성/수정
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:comment w:id="0" w:author="Claude" w:date="2025-01-27T00:00:00Z" w:initials="C">
+    <w:p>
+      <w:r><w:t>코멘트 내용입니다.</w:t></w:r>
+    </w:p>
+  </w:comment>
+</w:comments>
+```
+
+### Python 코멘트 생성
+
+```python
+from defusedxml.minidom import parse, parseString
+import os
+
+def add_comment(unpacked_dir, comment_id, comment_text, author="Claude", parent_id=None):
+    """코멘트를 추가합니다. parent_id가 있으면 답글로 생성."""
+    comments_path = os.path.join(unpacked_dir, 'word', 'comments.xml')
+    date = "2025-01-27T00:00:00Z"
+    initials = author[0].upper()
+
+    if os.path.exists(comments_path):
+        dom = parse(comments_path)
+        comments_elem = dom.getElementsByTagName('w:comments')[0]
+    else:
+        xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+</w:comments>'''
+        dom = parseString(xml)
+        comments_elem = dom.documentElement
+
+    # 코멘트 요소 생성
+    comment_xml = f'''<w:comment xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        w:id="{comment_id}" w:author="{author}" w:date="{date}" w:initials="{initials}">
+      <w:p><w:r><w:t>{comment_text}</w:t></w:r></w:p>
+    </w:comment>'''
+
+    new_comment = parseString(comment_xml).documentElement
+    comments_elem.appendChild(dom.importNode(new_comment, True))
+
+    with open(comments_path, 'w', encoding='utf-8') as f:
+        dom.writexml(f, encoding='UTF-8')
+
+    # Content_Types.xml 업데이트
+    _ensure_content_type(unpacked_dir, '/word/comments.xml',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+
+    # document.xml.rels 업데이트
+    _ensure_relationship(unpacked_dir,
+        'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments',
+        'comments.xml')
+
+
+def _ensure_content_type(unpacked_dir, part_name, content_type):
+    """Content_Types.xml에 Override가 없으면 추가."""
+    ct_path = os.path.join(unpacked_dir, '[Content_Types].xml')
+    dom = parse(ct_path)
+    types_elem = dom.documentElement
+
+    for override in dom.getElementsByTagName('Override'):
+        if override.getAttribute('PartName') == part_name:
+            return  # 이미 존재
+
+    override = dom.createElement('Override')
+    override.setAttribute('PartName', part_name)
+    override.setAttribute('ContentType', content_type)
+    types_elem.appendChild(override)
+
+    with open(ct_path, 'w', encoding='utf-8') as f:
+        dom.writexml(f)
+
+
+def _ensure_relationship(unpacked_dir, rel_type, target):
+    """document.xml.rels에 Relationship이 없으면 추가."""
+    rels_path = os.path.join(unpacked_dir, 'word', '_rels', 'document.xml.rels')
+    dom = parse(rels_path)
+    rels_elem = dom.documentElement
+
+    # 기존 rId 중 최대값 찾기
+    max_id = 0
+    for rel in dom.getElementsByTagName('Relationship'):
+        if rel.getAttribute('Type') == rel_type:
+            return  # 이미 존재
+        rid = rel.getAttribute('Id')
+        if rid.startswith('rId'):
+            max_id = max(max_id, int(rid[3:]))
+
+    new_rel = dom.createElement('Relationship')
+    new_rel.setAttribute('Id', f'rId{max_id + 1}')
+    new_rel.setAttribute('Type', rel_type)
+    new_rel.setAttribute('Target', target)
+    rels_elem.appendChild(new_rel)
+
+    with open(rels_path, 'w', encoding='utf-8') as f:
+        dom.writexml(f)
+```
+
+### Content_Types.xml 업데이트 (수동)
+
+```xml
+<Override PartName="/word/comments.xml"
+          ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
+```
+
+### document.xml.rels 업데이트 (수동)
+
+```xml
+<Relationship Id="rId10"
+              Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+              Target="comments.xml"/>
 ```
 
 ---
@@ -521,6 +695,15 @@ cp image.png unpacked/word/media/image1.png
 
 ---
 
+## 이미지 변환 (QA용)
+
+```bash
+soffice --headless --convert-to pdf document.docx
+pdftoppm -jpeg -r 150 document.pdf page
+```
+
+---
+
 ## Validation 체크리스트
 
 ### XML 검증
@@ -580,17 +763,24 @@ cp image.png unpacked/word/media/image1.png
   <w:spacing/>     <!-- 3. 간격 -->
   <w:ind/>         <!-- 4. 들여쓰기 -->
   <w:jc/>          <!-- 5. 정렬 -->
+  <w:rPr/>         <!-- 6. (마지막) -->
 </w:pPr>
 ```
 
-### Character Encoding
+### Schema 준수
 
-| 문자 | Entity |
+- **공백**: 앞뒤 공백 있는 `<w:t>`에 `xml:space="preserve"` 추가
+- **RSID**: 8자리 16진수 (예: `00AB1234`)
+
+### 문자 인코딩
+
+| 문자 | 엔티티 |
 |------|--------|
-| " (여는 쌍따옴표) | `&#8220;` |
-| " (닫는 쌍따옴표) | `&#8221;` |
-| ' (아포스트로피) | `&#8217;` |
-| — (em 대시) | `&#8212;` |
+| " (왼쪽 큰따옴표) | `&#x201C;` |
+| " (오른쪽 큰따옴표) | `&#x201D;` |
+| ' (왼쪽 작은따옴표) | `&#x2018;` |
+| ' (오른쪽 작은따옴표 / 아포스트로피) | `&#x2019;` |
+| — (em 대시) | `&#x2014;` |
 
 ### 공백 보존
 

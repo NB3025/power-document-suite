@@ -20,10 +20,10 @@ Office 문서 작업을 위한 Kiro Power입니다.
 | Word (.docx) | 새 문서 생성 | docx (JS) | `docx-create.md` |
 | Word (.docx) | 기존 문서 편집 | OOXML (Python) | `docx-edit.md` |
 | Word (.docx) | Tracked Changes | OOXML (Python) | `docx-edit.md` |
-| PowerPoint (.pptx) | 새 프레젠테이션 | html2pptx (JS) | `pptx-create.md` |
-| PowerPoint (.pptx) | 템플릿 기반 생성 | OOXML (Python) | `pptx-template.md` |
+| PowerPoint (.pptx) | 새 프레젠테이션 | PptxGenJS (JS) | `pptx-create.md` |
+| PowerPoint (.pptx) | 템플릿 기반/편집 | OOXML (Python) | `pptx-template.md` |
 | PDF | 텍스트/테이블 추출 | pdfplumber (Python) | `pdf-extract.md` |
-| PDF | 폼 작성 | pypdf (Python) | `pdf-forms.md` |
+| PDF | 폼 작성 | pypdf, reportlab (Python) | `pdf-forms.md` |
 | Excel (.xlsx) | 생성/편집/분석 | openpyxl, pandas | `xlsx-guide.md` |
 
 ## When to Use This Power
@@ -50,10 +50,13 @@ Office 문서 작업을 위한 Kiro Power입니다.
 
 ```bash
 # 필수
-pip install pypdf pdfplumber reportlab openpyxl pandas defusedxml
+pip install pypdf pdfplumber reportlab openpyxl pandas defusedxml Pillow
 
-# PowerPoint 텍스트 추출용
+# PowerPoint/Word 텍스트 추출용
 pip install "markitdown[pptx]"
+
+# OCR용 (선택)
+pip install pytesseract pdf2image
 ```
 
 ## Step 2: Node.js 의존성
@@ -62,27 +65,27 @@ pip install "markitdown[pptx]"
 # Word 문서 생성용
 npm install -g docx
 
-# PowerPoint 생성용
-npm install -g pptxgenjs playwright sharp
+# PowerPoint 생성용 (네이티브 편집 가능한 슬라이드)
+npm install -g pptxgenjs sharp
 ```
 
 ## Step 3: 시스템 도구
 
 ```bash
 # macOS
-brew install pandoc poppler libreoffice
+brew install pandoc poppler libreoffice qpdf imagemagick
 
 # Ubuntu/Linux
-sudo apt-get install pandoc poppler-utils libreoffice
+sudo apt-get install pandoc poppler-utils libreoffice qpdf imagemagick
 ```
 
 ## Step 4: 의존성 확인
 
 ```bash
-# 확인 명령어
 pandoc --version
 pdftotext -v
 soffice --version
+qpdf --version
 node -e "require('docx')"
 node -e "require('pptxgenjs')"
 python -c "import openpyxl; import pdfplumber; print('OK')"
@@ -96,34 +99,41 @@ python -c "import openpyxl; import pdfplumber; print('OK')"
 
 | 작업 | Steering 파일 | 설명 |
 |------|---------------|------|
-| 새 문서 생성 | `docx-create.md` | docx.js로 새 Word 문서 생성 |
-| 기존 문서 편집 | `docx-edit.md` | OOXML로 기존 문서 수정 |
+| 새 문서 생성 | `docx-create.md` | docx.js로 새 Word 문서 생성 + soffice 검증 |
+| 기존 문서 편집 | `docx-edit.md` | unpack → XML 편집 → pack |
 | Tracked Changes | `docx-edit.md` | 변경 추적 추가 (Redlining) |
+| Comments | `docx-edit.md` | 인라인 코드로 코멘트/답글 추가 |
 | 텍스트 추출 | `docx-edit.md` | pandoc으로 마크다운 변환 |
 
 ## PowerPoint (.pptx)
 
 | 작업 | Steering 파일 | 설명 |
 |------|---------------|------|
-| 새 프레젠테이션 | `pptx-create.md` | HTML→PPTX 워크플로우 |
-| 템플릿 기반 생성 | `pptx-template.md` | 기존 템플릿 활용 |
-| 텍스트 추출 | `pptx-create.md` | markitdown 사용 |
+| 새 프레젠테이션 | `pptx-create.md` | PptxGenJS 네이티브 객체 (편집 가능) |
+| 템플릿 기반/편집 | `pptx-template.md` | unpack → XML 편집 → pack |
+| 텍스트 추출 | `pptx-template.md` | markitdown 사용 |
 
 ## PDF
 
 | 작업 | Steering 파일 | 설명 |
 |------|---------------|------|
-| 텍스트 추출 | `pdf-extract.md` | pdfplumber, pypdf |
-| 테이블 추출 | `pdf-extract.md` | pandas로 변환 |
-| 병합/분할 | `pdf-extract.md` | pypdf 사용 |
-| 폼 작성 | `pdf-forms.md` | 필드 채우기 |
+| 텍스트 추출 | `pdf-extract.md` | pdfplumber (권장), pypdf |
+| 테이블 추출 | `pdf-extract.md` | pdfplumber + pandas |
+| 병합/분할 | `pdf-extract.md` | pypdf 또는 qpdf |
+| PDF 생성 | `pdf-extract.md` | reportlab (Canvas, Platypus) |
+| 이미지 변환 | `pdf-extract.md` | pdftoppm, pypdfium2 |
+| 암호화/복호화 | `pdf-extract.md` | pypdf 또는 qpdf |
+| OCR | `pdf-extract.md` | pytesseract + pdf2image |
+| 폼 작성 (Fillable) | `pdf-forms.md` | pypdf 인라인 코드로 필드 채우기 |
+| 폼 작성 (Non-Fillable) | `pdf-forms.md` | 구조 추출 + 어노테이션 오버레이 |
 
 ## Excel (.xlsx)
 
 | 작업 | Steering 파일 | 설명 |
 |------|---------------|------|
 | 스프레드시트 생성 | `xlsx-guide.md` | openpyxl 사용 |
-| 수식 사용 | `xlsx-guide.md` | Excel 수식 작성법 |
+| 수식 사용 | `xlsx-guide.md` | Excel 수식 (하드코딩 금지) |
+| 수식 재계산 | `xlsx-guide.md` | soffice --headless 재계산 |
 | 데이터 분석 | `xlsx-guide.md` | pandas 활용 |
 
 ---
@@ -142,14 +152,17 @@ python -c "import openpyxl; import pdfplumber; print('OK')"
 1. 사용자가 원하는 내용/구조 파악
 2. 해당 steering 파일 참조
 3. 코드 작성 및 실행
-4. 생성된 파일 경로 안내
+4. 검증 (soffice --headless 변환으로 확인)
+5. 시각 QA (soffice → pdftoppm으로 이미지 변환 후 확인)
+6. 생성된 파일 경로 안내
 
-## 문서 편집 시
+## 문서 편집 시 (OOXML)
 
 1. 원본 파일 경로 확인
-2. 어떤 부분을 수정할지 파악
-3. 백업 권장 (원본 보존)
-4. 편집 후 결과 확인
+2. unzip으로 XML 추출 (인라인 코드 참조)
+3. Edit 도구로 XML 직접 편집
+4. zip으로 재팩 + soffice 검증
+5. 시각 QA로 결과 확인
 
 ## 텍스트 추출 시
 
@@ -185,34 +198,33 @@ python -m markitdown presentation.pptx
 python -c "import pdfplumber; pdf=pdfplumber.open('doc.pdf'); print(pdf.pages[0].extract_text())"
 ```
 
-## 문서 생성
+## 포맷 변환 / 시각 QA
 
 ```bash
-# Word (Node.js)
-node create-doc.js
-
-# PowerPoint (Node.js)
-node create-pptx.js
-
-# PDF (Python)
-python create-pdf.py
-
-# Excel (Python)
-python create-xlsx.py
-```
-
-## 포맷 변환
-
-```bash
-# DOCX → PDF
+# DOCX/PPTX → PDF
 soffice --headless --convert-to pdf document.docx
 
-# PPTX → PDF
-soffice --headless --convert-to pdf presentation.pptx
-
-# PDF → Images
+# PDF → 이미지 (시각 QA용)
 pdftoppm -jpeg -r 150 document.pdf page
+
+# 특정 페이지만
+pdftoppm -jpeg -r 150 -f 3 -l 3 document.pdf page
 ```
+
+## 유틸리티 함수
+
+모든 유틸리티 함수(unpack, pack, 검증, 코멘트, 변경추적 등)는 각 steering 파일 내에 인라인 코드로 포함되어 있습니다. 별도 스크립트 파일 없이 steering 파일만 참조하세요.
+
+| 기능 | 참조 파일 |
+|------|-----------|
+| DOCX/PPTX 추출 (unpack) | `docx-edit.md`, `pptx-template.md` |
+| DOCX/PPTX 재팩 (pack) | `docx-edit.md`, `pptx-template.md` |
+| XML 검증 | `soffice --headless --convert-to pdf` 사용 |
+| DOCX 코멘트 생성 | `docx-edit.md` |
+| Tracked changes 수락 | `docx-edit.md` |
+| PPTX 텍스트 교체/정리 | `pptx-template.md` |
+| Excel 수식 재계산 | `xlsx-guide.md` |
+| PDF 폼 작성 | `pdf-forms.md` |
 
 ---
 

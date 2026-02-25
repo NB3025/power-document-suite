@@ -1,10 +1,10 @@
 # PDF 텍스트/테이블 추출 및 조작
 
-PDF에서 텍스트, 테이블 추출 및 병합/분할 가이드입니다.
+PDF 처리의 핵심 가이드입니다. 폼 작성은 `pdf-forms.md`를 참조하세요.
 
 ## Overview
 
-PDF 파일에서 텍스트와 테이블을 추출하고, 여러 PDF를 병합/분할하는 방법을 다룹니다. pdfplumber와 pypdf 라이브러리를 사용합니다.
+PDF 파일에서 텍스트/테이블 추출, 병합/분할, 워터마크, 이미지 변환, 암호화를 다룹니다.
 
 ## Workflow Decision Tree
 
@@ -12,118 +12,101 @@ PDF 파일에서 텍스트와 테이블을 추출하고, 여러 PDF를 병합/�
 PDF 작업 유형?
 ├── 텍스트 추출 → pdfplumber (권장) 또는 pypdf
 ├── 테이블 추출 → pdfplumber + pandas
-├── PDF 병합/분할 → pypdf
+├── PDF 병합/분할 → pypdf 또는 qpdf
 ├── 워터마크 추가 → pypdf + reportlab
-├── PDF → 이미지 → pdftoppm 또는 pdf2image
+├── PDF → 이미지 → pdftoppm 또는 pypdfium2
+├── 이미지 추출 → pdfimages (poppler)
+├── PDF 생성 → reportlab
 ├── 폼 채우기 → pdf-forms.md
+├── OCR (스캔 PDF) → pytesseract + pdf2image
+├── 암호화/복호화 → pypdf 또는 qpdf
 └── 메타데이터 수정 → pypdf
 ```
 
 ## Prerequisites
 
 ```bash
-pip install pdfplumber pypdf pandas reportlab
+pip install pypdf pdfplumber pandas reportlab
 
 # 이미지 변환용
-brew install poppler  # macOS
-# sudo apt-get install poppler-utils  # Ubuntu
+brew install poppler  # macOS (pdftoppm, pdfimages)
+
+# 고급 조작
+brew install qpdf
+
+# OCR용
+pip install pytesseract pdf2image
 ```
 
 ---
 
-## ⚠️ CRITICAL: 자주 발생하는 오류
+## Quick Start
 
-### ❌/✅ Common Mistakes
+```python
+from pypdf import PdfReader, PdfWriter
 
-| ❌ Wrong | ✅ Correct | 설명 |
-|----------|-----------|------|
-| `reader.pages[1]` (첫 페이지) | `reader.pages[0]` | 0-indexed |
-| pdfplumber 좌표 → reportlab 직접 사용 | `reportlab_y = page_height - pdfplumber_y` | 좌표 변환 필요 |
-| `writer.write(output_path)` | `writer.write(file_obj)` 또는 `writer.write("path")` | 파일 객체/경로 |
-| 닫지 않은 PdfWriter | `writer.close()` 호출 | 리소스 정리 |
-| 테이블 없는 페이지에서 추출 | 먼저 테이블 존재 확인 | None 체크 |
+reader = PdfReader("document.pdf")
+print(f"Pages: {len(reader.pages)}")
+
+text = ""
+for page in reader.pages:
+    text += page.extract_text()
+```
 
 ---
 
 ## 텍스트 추출
 
-### pdfplumber (권장)
-
-레이아웃 기반 추출로 더 정확한 결과를 제공합니다.
+### pdfplumber (권장 — 레이아웃 기반)
 
 ```python
 import pdfplumber
 
 with pdfplumber.open("document.pdf") as pdf:
-    for i, page in enumerate(pdf.pages):
+    for page in pdf.pages:
         text = page.extract_text()
         if text:
-            print(f"=== Page {i+1} ===")
             print(text)
-        else:
-            print(f"=== Page {i+1}: No text found ===")
 ```
 
 ### 특정 영역 추출
 
 ```python
-import pdfplumber
-
 with pdfplumber.open("document.pdf") as pdf:
     page = pdf.pages[0]
-
-    # 페이지 크기
-    print(f"Width: {page.width}, Height: {page.height}")
-
-    # 특정 영역만 추출 (bbox: x0, y0, x1, y1)
-    # ⚠️ pdfplumber는 왼쪽 상단 기준!
-    cropped = page.within_bbox((0, 0, page.width/2, page.height/2))  # 왼쪽 상단 1/4
+    # bbox: (x0, y0, x1, y1) — 왼쪽 상단 기준
+    cropped = page.within_bbox((0, 0, page.width/2, page.height/2))
     text = cropped.extract_text()
-    print(text)
 ```
 
-### pypdf
-
-더 빠르지만 레이아웃 정보가 덜 정확합니다.
+### pypdf (더 빠름, 레이아웃 덜 정확)
 
 ```python
 from pypdf import PdfReader
 
 reader = PdfReader("document.pdf")
-print(f"Total pages: {len(reader.pages)}")
-
-for i, page in enumerate(reader.pages):
-    text = page.extract_text()
-    print(f"=== Page {i+1} ===")
-    print(text)
+for page in reader.pages:
+    print(page.extract_text())
 ```
 
-### 대용량 PDF 처리
+### 커맨드라인
 
-```python
-import pdfplumber
+```bash
+# 텍스트 추출
+pdftotext input.pdf output.txt
 
-def extract_text_streaming(pdf_path, output_path):
-    """대용량 PDF를 스트리밍 방식으로 처리합니다."""
-    with pdfplumber.open(pdf_path) as pdf:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text()
-                if text:
-                    f.write(f"=== Page {i+1} ===\n")
-                    f.write(text)
-                    f.write("\n\n")
-                # 메모리 절약
-                page.flush_cache()
+# 레이아웃 보존
+pdftotext -layout input.pdf output.txt
 
-extract_text_streaming("large_document.pdf", "output.txt")
+# 특정 페이지 (1-5)
+pdftotext -f 1 -l 5 input.pdf output.txt
 ```
 
 ---
 
 ## 테이블 추출
 
-### 기본 테이블 추출
+### 기본
 
 ```python
 import pdfplumber
@@ -131,83 +114,49 @@ import pandas as pd
 
 with pdfplumber.open("document.pdf") as pdf:
     page = pdf.pages[0]
-
-    # 모든 테이블 추출
     tables = page.extract_tables()
 
-    if not tables:
-        print("No tables found on this page")
-    else:
-        for i, table in enumerate(tables):
-            if table and len(table) > 1:
-                df = pd.DataFrame(table[1:], columns=table[0])
-                print(f"=== Table {i+1} ===")
-                print(df)
-                df.to_csv(f"table_{i+1}.csv", index=False)
+    for i, table in enumerate(tables):
+        if table and len(table) > 1:
+            df = pd.DataFrame(table[1:], columns=table[0])
+            df.to_csv(f"table_{i+1}.csv", index=False)
 ```
 
-### 테이블 추출 옵션
+### 커스텀 설정 (복잡한 레이아웃)
 
 ```python
-import pdfplumber
+# 선 기반 (기본)
+table_settings = {
+    "vertical_strategy": "lines",
+    "horizontal_strategy": "lines",
+    "snap_tolerance": 3,
+    "intersection_tolerance": 15
+}
 
-with pdfplumber.open("document.pdf") as pdf:
-    page = pdf.pages[0]
+# 텍스트 기반 (선 없는 테이블)
+table_settings = {
+    "vertical_strategy": "text",
+    "horizontal_strategy": "text",
+}
 
-    # 선 기반 테이블 (기본)
-    table_settings_lines = {
-        "vertical_strategy": "lines",
-        "horizontal_strategy": "lines",
-    }
-
-    # 텍스트 기반 테이블 (선이 없는 경우)
-    table_settings_text = {
-        "vertical_strategy": "text",
-        "horizontal_strategy": "text",
-        "snap_tolerance": 3,
-        "join_tolerance": 3,
-    }
-
-    # 명시적 좌표 (특정 영역만)
-    table_settings_explicit = {
-        "vertical_strategy": "explicit",
-        "horizontal_strategy": "explicit",
-        "explicit_vertical_lines": [100, 200, 300, 400],
-        "explicit_horizontal_lines": [50, 100, 150, 200],
-    }
-
-    tables = page.extract_tables(table_settings_lines)
+tables = page.extract_tables(table_settings)
 ```
 
-### 모든 페이지에서 테이블 추출
+### 모든 페이지에서 추출
 
 ```python
-import pdfplumber
-import pandas as pd
-
 def extract_all_tables(pdf_path):
-    """모든 페이지에서 테이블을 추출합니다."""
     all_tables = []
-
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages):
-            tables = page.extract_tables()
-
-            for table_idx, table in enumerate(tables):
+            for table in page.extract_tables():
                 if table and len(table) > 1:
                     df = pd.DataFrame(table[1:], columns=table[0])
                     df['source_page'] = page_num + 1
-                    df['table_index'] = table_idx + 1
                     all_tables.append(df)
-
     if all_tables:
-        combined = pd.concat(all_tables, ignore_index=True)
-        return combined
+        return pd.concat(all_tables, ignore_index=True)
     return None
-
-df = extract_all_tables("report.pdf")
-if df is not None:
-    df.to_excel("all_tables.xlsx", index=False)
 ```
 
 ---
@@ -215,137 +164,131 @@ if df is not None:
 ## PDF 병합
 
 ```python
-from pypdf import PdfWriter
+from pypdf import PdfWriter, PdfReader
 
-def merge_pdfs(pdf_files, output_path):
-    """여러 PDF를 병합합니다."""
-    writer = PdfWriter()
+writer = PdfWriter()
+for pdf_file in ["doc1.pdf", "doc2.pdf", "doc3.pdf"]:
+    reader = PdfReader(pdf_file)
+    for page in reader.pages:
+        writer.add_page(page)
 
-    for pdf_file in pdf_files:
-        writer.append(pdf_file)
-
-    writer.write(output_path)
-    writer.close()
-
-# 사용
-merge_pdfs(["doc1.pdf", "doc2.pdf", "doc3.pdf"], "merged.pdf")
+with open("merged.pdf", "wb") as output:
+    writer.write(output)
 ```
 
-### 특정 페이지만 병합
+### 커맨드라인
 
-```python
-from pypdf import PdfReader, PdfWriter
+```bash
+# qpdf
+qpdf --empty --pages doc1.pdf doc2.pdf -- merged.pdf
 
-def merge_specific_pages(inputs, output_path):
-    """
-    특정 페이지만 병합합니다.
-    inputs: [(pdf_path, [page_numbers]), ...] - page_numbers는 0-indexed
-    """
-    writer = PdfWriter()
-
-    for pdf_path, pages in inputs:
-        reader = PdfReader(pdf_path)
-        for page_num in pages:
-            if 0 <= page_num < len(reader.pages):
-                writer.add_page(reader.pages[page_num])
-
-    writer.write(output_path)
-    writer.close()
-
-# 사용: doc1의 1,3페이지 + doc2의 2페이지 병합
-merge_specific_pages([
-    ("doc1.pdf", [0, 2]),  # 1페이지, 3페이지
-    ("doc2.pdf", [1]),     # 2페이지
-], "selected_pages.pdf")
+# 특정 페이지만
+qpdf --empty --pages doc1.pdf 1-3 doc2.pdf 5-7 -- combined.pdf
 ```
 
 ---
 
 ## PDF 분할
 
-### 각 페이지를 별도 파일로
-
 ```python
 from pypdf import PdfReader, PdfWriter
 
-def split_pdf_to_pages(input_path, output_prefix):
-    """각 페이지를 별도 PDF로 분할합니다."""
-    reader = PdfReader(input_path)
-
-    for i, page in enumerate(reader.pages):
-        writer = PdfWriter()
-        writer.add_page(page)
-        writer.write(f"{output_prefix}_page_{i+1}.pdf")
-        writer.close()
-
-split_pdf_to_pages("document.pdf", "output")
+reader = PdfReader("input.pdf")
+for i, page in enumerate(reader.pages):
+    writer = PdfWriter()
+    writer.add_page(page)
+    with open(f"page_{i+1}.pdf", "wb") as output:
+        writer.write(output)
 ```
 
-### 페이지 범위로 분할
+### 페이지 범위 추출
 
 ```python
-from pypdf import PdfReader, PdfWriter
-
-def extract_pages(input_path, output_path, start_page, end_page):
-    """
-    특정 페이지 범위를 추출합니다.
-    start_page, end_page: 1-indexed (사용자 친화적)
-    """
+def extract_pages(input_path, output_path, start, end):
     reader = PdfReader(input_path)
     writer = PdfWriter()
-
-    # 1-indexed를 0-indexed로 변환
-    for i in range(start_page - 1, min(end_page, len(reader.pages))):
+    for i in range(start - 1, min(end, len(reader.pages))):
         writer.add_page(reader.pages[i])
+    with open(output_path, "wb") as f:
+        writer.write(f)
 
-    writer.write(output_path)
-    writer.close()
-
-# 3-5페이지 추출
 extract_pages("document.pdf", "pages_3_to_5.pdf", 3, 5)
+```
+
+### 커맨드라인
+
+```bash
+qpdf input.pdf --pages . 1-5 -- pages1-5.pdf
+qpdf --split-pages=3 input.pdf output_%02d.pdf  # 3페이지씩 분할
 ```
 
 ---
 
-## 워터마크 추가
+## PDF 생성 (reportlab)
+
+### 기본
+
+```python
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
+c = canvas.Canvas("hello.pdf", pagesize=letter)
+width, height = letter
+c.drawString(100, height - 100, "Hello World!")
+c.line(100, height - 140, 400, height - 140)
+c.save()
+```
+
+### 전문 보고서 (Platypus)
+
+```python
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+
+doc = SimpleDocTemplate("report.pdf", pagesize=letter)
+styles = getSampleStyleSheet()
+story = []
+
+story.append(Paragraph("Report Title", styles['Title']))
+story.append(Spacer(1, 12))
+story.append(Paragraph("Body text content. " * 20, styles['Normal']))
+story.append(PageBreak())
+story.append(Paragraph("Page 2", styles['Heading1']))
+
+doc.build(story)
+```
+
+### ⚠️ 아래첨자/위첨자
+
+**유니코드 아래첨자/위첨자 문자 사용 금지** (내장 폰트에 글리프 없음 — 검은 박스로 렌더링).
+
+```python
+# ✅ CORRECT: XML 마크업 태그 사용
+chemical = Paragraph("H<sub>2</sub>O", styles['Normal'])
+squared = Paragraph("x<super>2</super>", styles['Normal'])
+
+# ❌ WRONG: 유니코드 문자 사용
+# Paragraph("H₂O", ...)  # 검은 박스
+```
+
+---
+
+## 워터마크
 
 ```python
 from pypdf import PdfReader, PdfWriter
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from io import BytesIO
 
-def create_watermark(text, opacity=0.3):
-    """워터마크 PDF를 생성합니다."""
-    buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
+watermark = PdfReader("watermark.pdf").pages[0]
+reader = PdfReader("document.pdf")
+writer = PdfWriter()
 
-    c.saveState()
-    c.setFont("Helvetica", 50)
-    c.setFillColorRGB(0.5, 0.5, 0.5, opacity)
-    c.translate(letter[0]/2, letter[1]/2)
-    c.rotate(45)
-    c.drawCentredString(0, 0, text)
-    c.restoreState()
+for page in reader.pages:
+    page.merge_page(watermark)
+    writer.add_page(page)
 
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-def add_watermark(input_path, output_path, watermark_text):
-    """PDF에 워터마크를 추가합니다."""
-    reader = PdfReader(input_path)
-    watermark_reader = PdfReader(create_watermark(watermark_text))
-    writer = PdfWriter()
-
-    for page in reader.pages:
-        page.merge_page(watermark_reader.pages[0])
-        writer.add_page(page)
-
-    writer.write(output_path)
-    writer.close()
-
-add_watermark("document.pdf", "watermarked.pdf", "CONFIDENTIAL")
+with open("watermarked.pdf", "wb") as output:
+    writer.write(output)
 ```
 
 ---
@@ -355,77 +298,33 @@ add_watermark("document.pdf", "watermarked.pdf", "CONFIDENTIAL")
 ### pdftoppm (권장)
 
 ```bash
-# 모든 페이지를 JPEG로
-pdftoppm -jpeg -r 150 document.pdf output
-
-# 특정 페이지만 (1-3페이지)
-pdftoppm -jpeg -r 300 -f 1 -l 3 document.pdf pages
-
-# PNG로 변환
-pdftoppm -png -r 200 document.pdf output
+pdftoppm -jpeg -r 150 document.pdf output      # 전체
+pdftoppm -png -r 300 -f 1 -l 3 document.pdf pages  # 특정 페이지
 ```
 
-### Python (pdf2image)
+### pypdfium2
 
 ```python
-from pdf2image import convert_from_path
+import pypdfium2 as pdfium
 
-def pdf_to_images(pdf_path, output_dir, dpi=150, fmt="jpeg"):
-    """PDF를 이미지로 변환합니다."""
-    images = convert_from_path(pdf_path, dpi=dpi)
-
-    for i, img in enumerate(images):
-        output_path = f"{output_dir}/page_{i+1}.{fmt}"
-        img.save(output_path, fmt.upper())
-        print(f"Saved: {output_path}")
-
-pdf_to_images("document.pdf", "images", dpi=150)
+pdf = pdfium.PdfDocument("document.pdf")
+for i, page in enumerate(pdf):
+    bitmap = page.render(scale=2.0)
+    img = bitmap.to_pil()
+    img.save(f"page_{i+1}.png", "PNG")
 ```
 
 ---
 
-## 메타데이터 조회/수정
+## 이미지 추출
 
-### 메타데이터 조회
+```bash
+# 내장 이미지 추출 (poppler)
+pdfimages -j input.pdf output_prefix
+pdfimages -all input.pdf images/img
 
-```python
-from pypdf import PdfReader
-
-reader = PdfReader("document.pdf")
-
-# 메타데이터 조회
-print("=== Metadata ===")
-if reader.metadata:
-    for key, value in reader.metadata.items():
-        print(f"{key}: {value}")
-
-print(f"\nTotal pages: {len(reader.pages)}")
-```
-
-### 메타데이터 수정
-
-```python
-from pypdf import PdfReader, PdfWriter
-
-def update_metadata(input_path, output_path, metadata):
-    """PDF 메타데이터를 수정합니다."""
-    reader = PdfReader(input_path)
-    writer = PdfWriter()
-
-    writer.append(reader)
-    writer.add_metadata(metadata)
-
-    writer.write(output_path)
-    writer.close()
-
-# 사용
-update_metadata("document.pdf", "updated.pdf", {
-    "/Title": "Updated Title",
-    "/Author": "Author Name",
-    "/Subject": "Document Subject",
-    "/Keywords": "keyword1, keyword2",
-    "/Creator": "My Application"
-})
+# 이미지 목록 확인
+pdfimages -list document.pdf
 ```
 
 ---
@@ -435,149 +334,156 @@ update_metadata("document.pdf", "updated.pdf", {
 ```python
 from pypdf import PdfReader, PdfWriter
 
-def rotate_pages(input_path, output_path, rotation, pages=None):
-    """
-    페이지를 회전합니다.
-    rotation: 90, 180, 270
-    pages: None (모든 페이지) 또는 [0, 2, 4] (특정 페이지, 0-indexed)
-    """
-    reader = PdfReader(input_path)
-    writer = PdfWriter()
+reader = PdfReader("input.pdf")
+writer = PdfWriter()
 
-    for i, page in enumerate(reader.pages):
-        if pages is None or i in pages:
-            page.rotate(rotation)
-        writer.add_page(page)
+page = reader.pages[0]
+page.rotate(90)  # 시계 방향 90도
+writer.add_page(page)
 
-    writer.write(output_path)
-    writer.close()
-
-# 모든 페이지 90도 회전
-rotate_pages("document.pdf", "rotated.pdf", 90)
-
-# 1, 3페이지만 180도 회전
-rotate_pages("document.pdf", "rotated.pdf", 180, pages=[0, 2])
+with open("rotated.pdf", "wb") as output:
+    writer.write(output)
 ```
 
 ---
 
-## 문자 위치 정보 추출
+## 암호화/복호화
 
 ```python
-import pdfplumber
+from pypdf import PdfReader, PdfWriter
 
-with pdfplumber.open("document.pdf") as pdf:
-    page = pdf.pages[0]
+# 암호화
+reader = PdfReader("input.pdf")
+writer = PdfWriter()
+for page in reader.pages:
+    writer.add_page(page)
+writer.encrypt("userpassword", "ownerpassword")
+with open("encrypted.pdf", "wb") as output:
+    writer.write(output)
+```
 
-    # 문자 위치 정보
-    for char in page.chars[:20]:  # 처음 20자
-        print(f"'{char['text']}' at ({char['x0']:.1f}, {char['y0']:.1f}) - ({char['x1']:.1f}, {char['y1']:.1f})")
+### 커맨드라인
 
-    # 특정 텍스트 찾기
-    def find_text_position(page, search_text):
-        """텍스트의 위치를 찾습니다."""
-        text = page.extract_text()
-        if search_text in text:
-            # 단어 단위로 검색
-            for word in page.extract_words():
-                if search_text in word['text']:
-                    return {
-                        'text': word['text'],
-                        'x0': word['x0'],
-                        'y0': word['top'],  # pdfplumber의 top
-                        'x1': word['x1'],
-                        'y1': word['bottom']
-                    }
-        return None
+```bash
+# 암호화
+qpdf --encrypt user_pass owner_pass 256 --print=none --modify=none -- input.pdf encrypted.pdf
 
-    position = find_text_position(page, "Invoice")
-    if position:
-        print(f"Found '{position['text']}' at ({position['x0']:.1f}, {position['y0']:.1f})")
+# 복호화
+qpdf --password=secret --decrypt encrypted.pdf decrypted.pdf
+
+# 암호화 상태 확인
+qpdf --show-encryption encrypted.pdf
 ```
 
 ---
 
-## 좌표 체계 비교
-
-```
-pdfplumber 좌표 (왼쪽 상단 기준)         reportlab 좌표 (왼쪽 하단 기준)
-┌─────────────────┐ (0, 0)               ┌─────────────────┐ (0, height)
-│                 │                       │                 │
-│                 │                       │                 │
-│                 │                       │                 │
-└─────────────────┘ (width, height)      └─────────────────┘ (width, 0)
-                                          (0, 0)
-```
-
-### 좌표 변환
+## OCR (스캔 PDF)
 
 ```python
-def pdfplumber_to_reportlab(y, page_height):
-    """pdfplumber 좌표를 reportlab 좌표로 변환합니다."""
-    return page_height - y
-
-def reportlab_to_pdfplumber(y, page_height):
-    """reportlab 좌표를 pdfplumber 좌표로 변환합니다."""
-    return page_height - y
-```
-
----
-
-## Troubleshooting
-
-### "Cannot extract text" (텍스트 추출 불가)
-- **원인**: 스캔된 PDF (이미지 기반)
-- **해결**: OCR 사용 (pytesseract + pdf2image)
-
-```python
-from pdf2image import convert_from_path
 import pytesseract
+from pdf2image import convert_from_path
 
-images = convert_from_path("scanned.pdf")
-for i, img in enumerate(images):
-    text = pytesseract.image_to_string(img, lang='eng')
+images = convert_from_path('scanned.pdf')
+for i, image in enumerate(images):
+    text = pytesseract.image_to_string(image, lang='eng')
     print(f"Page {i+1}: {text}")
 ```
 
-### "No tables found" (테이블 없음)
-- **원인**: 선이 없는 테이블
-- **해결**: `text` strategy 사용
+---
 
-### "Index out of range"
-- **원인**: 페이지 번호 오류 (1-indexed vs 0-indexed)
-- **해결**: `reader.pages[0]`이 첫 페이지
+## 메타데이터
 
-### 한글 깨짐
-- **원인**: 인코딩 문제
-- **해결**: UTF-8 인코딩 확인, 폰트 임베딩 확인
+```python
+from pypdf import PdfReader, PdfWriter
 
-### 메모리 부족 (대용량 PDF)
-- **원인**: 전체 PDF 로드
-- **해결**: 페이지별 처리, `page.flush_cache()` 사용
+# 조회
+reader = PdfReader("document.pdf")
+if reader.metadata:
+    for key, value in reader.metadata.items():
+        print(f"{key}: {value}")
+
+# 수정
+writer = PdfWriter()
+writer.append(reader)
+writer.add_metadata({
+    "/Title": "Updated Title",
+    "/Author": "Author Name",
+})
+with open("updated.pdf", "wb") as f:
+    writer.write(f)
+```
+
+---
+
+## PDF 수리/최적화 (qpdf)
+
+```bash
+# 구조 검사
+qpdf --check input.pdf
+
+# 수리
+qpdf --replace-input corrupted.pdf
+
+# 웹 최적화 (스트리밍)
+qpdf --linearize input.pdf optimized.pdf
+
+# 압축
+qpdf --optimize-level=all input.pdf compressed.pdf
+```
+
+---
+
+## 좌표 체계
+
+```
+pdfplumber (왼쪽 상단 기준)         reportlab (왼쪽 하단 기준)
+(0, 0) ┌──────────────┐            ┌──────────────┐ (0, height)
+       │              │            │              │
+       └──────────────┘            └──────────────┘
+                (width, height)    (0, 0)        (width, 0)
+```
+
+```python
+def pdfplumber_to_reportlab(y, page_height):
+    return page_height - y
+```
 
 ---
 
 ## Quick Reference
 
-### pdfplumber 주요 메서드
+| 작업 | 도구 | 코드 |
+|------|------|------|
+| 텍스트 추출 | pdfplumber | `page.extract_text()` |
+| 테이블 추출 | pdfplumber | `page.extract_tables()` |
+| PDF 병합 | pypdf | `writer.add_page(page)` |
+| PDF 분할 | pypdf | 페이지별 PdfWriter |
+| PDF 생성 | reportlab | Canvas 또는 Platypus |
+| 이미지 변환 | pdftoppm | `pdftoppm -jpeg -r 150` |
+| 이미지 추출 | pdfimages | `pdfimages -all` |
+| 폼 채우기 | - | `pdf-forms.md` 참조 |
+| OCR | pytesseract | 이미지 변환 후 OCR |
+| CLI 병합 | qpdf | `qpdf --empty --pages ...` |
 
-| 메서드 | 설명 |
-|--------|------|
-| `pdf.pages` | 페이지 리스트 |
-| `page.extract_text()` | 텍스트 추출 |
-| `page.extract_tables()` | 테이블 추출 |
-| `page.chars` | 문자 위치 정보 |
-| `page.extract_words()` | 단어 위치 정보 |
-| `page.within_bbox((x0, y0, x1, y1))` | 영역 크롭 |
+---
 
-### pypdf 주요 메서드
+## Troubleshooting
 
-| 메서드 | 설명 |
-|--------|------|
-| `PdfReader(path)` | PDF 읽기 |
-| `PdfWriter()` | PDF 쓰기 |
-| `writer.append(reader)` | PDF 추가 |
-| `writer.add_page(page)` | 페이지 추가 |
-| `page.rotate(degrees)` | 페이지 회전 |
-| `page.merge_page(other)` | 페이지 병합 |
-| `writer.add_metadata({})` | 메타데이터 추가 |
+### 텍스트 추출 불가 (스캔 PDF)
+- **해결**: OCR 사용 (pytesseract + pdf2image)
+
+### 테이블 없음
+- **해결**: `text` strategy 사용 (선 없는 테이블)
+
+### "Index out of range"
+- **원인**: 페이지 번호 오류 (0-indexed)
+- **해결**: `reader.pages[0]`이 첫 페이지
+
+### 한글 깨짐
+- **해결**: UTF-8 인코딩 확인, 폰트 임베딩 확인
+
+### 메모리 부족 (대용량)
+- **해결**: 페이지별 처리, `read_only=True`, `page.flush_cache()`
+
+### 손상된 PDF
+- **해결**: `qpdf --check input.pdf` → `qpdf --replace-input`
